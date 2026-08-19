@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:cenc="urn:mpeg:cenc:2013" xsi:schemaLocation="urn:mpeg:dash:schema:mpd:2011 http://standards.iso.org/ittf/PubliclyAvailableStandards/MPEG-DASH_schema_files/DASH-MPD.xsd" type="static" minBufferTime="PT6S" profiles="urn:mpeg:dash:profile:isoff-main:2011" mediaPresentationDuration="PT30.037S">
+  <Period start="PT0S" duration="PT30.037S" id="1">
+    <AdaptationSet mimeType="video/mp4" frameRate="30/1" segmentAlignment="true" subsegmentAlignment="true" startWithSAP="1" subsegmentStartsWithSAP="1" bitstreamSwitching="false">
+      <ContentProtection cenc:default_KID="0123456789abcdef0123456789abcdef" schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"/>
+      <Representation id="1" width="1920" height="1080" bandwidth="5000000" codecs="avc1.640028">
+        <BaseURL>your-test-video_video.mp4</BaseURL>
+        <SegmentBase indexRange="856-1087">
+          <Initialization range="0-855"/>
+        </SegmentBase>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" lang="und" segmentAlignment="false">
+      <ContentProtection cenc:default_KID="0123456789abcdef0123456789abcdef" schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"/>
+      <Representation id="2" bandwidth="96000" audioSamplingRate="48000" codecs="mp4a.40.2">
+        <BaseURL>your-test-video_audio.mp4</BaseURL>
+        <SegmentBase indexRange="770-989">
+          <Initialization range="0-769"/>
+        </SegmentBase>
+        <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="2"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

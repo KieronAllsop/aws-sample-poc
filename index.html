@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AWS Fargate ClearKey DRM Sandbox</title>
+    
+    <!-- Load modern Shaka Player engine and compiled UI elements -->
+    <script src="shaka-player.compiled.js"></script>
+    <link rel="stylesheet" href="controls.css">
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            width: 100%;
+            max-width: 800px;
+            text-align: center;
+        }
+        .video-wrapper {
+            width: 100%;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+        }
+        video {
+            width: 100%;
+            display: block;
+        }
+        h2 { margin-bottom: 5px; color: #38bdf8; }
+        p { color: #94a3b8; font-size: 14px; margin-bottom: 25px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>AWS Fargate + ClearKey DRM</h2>
+    <p>Streaming encrypted DASH via Shaka Player EME hook</p>
+
+    <div class="video-wrapper" data-shaka-player-container>
+        <!-- The HTML5 video element targeted by the Shaka UI/Engine wrapper -->
+        <video id="video" data-shaka-player autoplay muted controls></video>
+    </div>
+</div>
+
+<script>
+    // 1. Define secure pipeline tokens using your active CloudFront endpoints
+    const CLOUDFRONT_BASE = "https://d3bfu6hfddegca.cloudfront.net";
+    
+    // --- UPDATED FIELD ---
+    // Change this string to match the exact name of the video file you uploaded 
+    // to your input bucket (e.g., if you uploaded 'sample.mp4', write 'sample')
+    const VIDEO_ID = "your-test-video/your-test-video";
+
+    // --- FIXED: Swapped out Python '#' comments for valid JavaScript '//' comments ---
+    // Points directly to the master MediaConvert manifest file layout in S3
+    const MANIFEST_URL = `${CLOUDFRONT_BASE}/${VIDEO_ID}.mpd?drm=clearkey-v5`;
+    const LICENSE_SERVER_URL = `${CLOUDFRONT_BASE}/get-clearkey`;
+
+    async function initSandboxPlayer() {
+        if (typeof shaka === 'undefined') {
+            setTimeout(initSandboxPlayer, 100);
+            return;
+        }
+
+        console.log("Bootstrap sequence initiated: Setting up authenticated polyfills...");
+        shaka.polyfill.installAll();
+
+        const video = document.getElementById('video');
+        video.addEventListener('pointerdown', () => {
+            video.muted = false;
+        }, { once: true });
+        const player = new shaka.Player(video);
+
+        // 2. Configure DRM licensing endpoint
+        player.configure({
+            drm: {
+                servers: {
+                    'org.w3.clearkey': LICENSE_SERVER_URL
+                }
+            }
+        });
+
+        // 3. NETWORK FILTER INTERCEPTORS
+        player.getNetworkingEngine().registerRequestFilter((type, request) => {
+            // Check if the request is a core video or audio media segment
+            if (type === shaka.net.NetworkingEngine.RequestType.SEGMENT) {
+                if (!request.uris[0].includes('X-Amz-Signature')) {
+                    console.log('🔒 Authenticating raw video segment request:', request.uris[0]);
+                    request.allowCrossSiteCredentials = true;
+                }
+            }
+
+            // Track license handshake events and format strings to bypass strict serialization bugs
+            if (type === shaka.net.NetworkingEngine.RequestType.LICENSE) {
+                console.log('🔗 EME Event: Fetching ClearKey from Fargate ALB endpoint:', request.uris);
+            }
+        });
+
+        player.getNetworkingEngine().registerResponseFilter((type, response) => {
+            if (type === shaka.net.NetworkingEngine.RequestType.LICENSE) {
+                console.log('✅ Success: Received unpadded JWK byte response from Fargate container API.');
+            }
+        });
+
+        console.log("Attempting to load encrypted DASH stream manifest:", MANIFEST_URL);
+        try {
+            await player.load(MANIFEST_URL);
+            await video.play();
+            console.log('🎉 Playback Active: Video stream decrypted successfully.');
+        } catch (error) {
+            console.error('❌ Shaka Engine Error Code:', error.code, error);
+        }
+    }
+
+    window.onload = () => {
+        initSandboxPlayer();
+    };
+</script>
+
+</body>
+</html>

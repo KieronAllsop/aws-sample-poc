@@ -1,0 +1,10 @@
+.terraform/
+terraform.tfstate
+terraform.tfstate.*
+.venv/
+__pycache__/
+*.py[cod]
+lambda_function.zip
+.env
+.env.*
+.DS_Store
