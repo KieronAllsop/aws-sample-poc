@@ -4,6 +4,8 @@ import os
 import zipfile
 from subprocess import run, PIPE, CalledProcessError
 
+PROJECT_NAME = os.environ.get("TF_VAR_project_name", "clearkey-video-pipeline")
+
 def refresh_lambda_function():
     # Remove existing zip file if it exists
     if os.path.exists('./lambda_function.zip'):
@@ -65,7 +67,7 @@ def build_and_push_docker_image(repo_url):
 def create_drm_cluster():
 
     # Run the AWS ECS command
-    ecs_command = "aws ecs update-service --cluster drm-services-cluster --service clearkey-api-service --force-new-deployment --region eu-west-2"
+    ecs_command = f"aws ecs update-service --cluster {PROJECT_NAME}-services-cluster --service {PROJECT_NAME}-api-service --force-new-deployment --region eu-west-2"
     result = run(ecs_command, shell=True, capture_output=True, text=True)
 
     # Parse the JSON output

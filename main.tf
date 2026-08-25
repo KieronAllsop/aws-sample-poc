@@ -53,12 +53,10 @@ locals {
   principal_lookup = {
     "s3_token"     = "s3.amazonaws.com"
     "lambda_token" = "lambda.amazonaws.com"
-    "ecs_token"    = "ecs-tasks.amazonaws.com"
   }
 }
 
 data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
 
 resource "aws_secretsmanager_secret" "database" {
   name                    = "${var.project_name}/database"
@@ -123,6 +121,20 @@ resource "aws_route_table_association" "a" {
 resource "aws_route_table_association" "b" {
   subnet_id      = aws_subnet.public_b.id
   route_table_id = aws_route_table.public.id
+}
+
+resource "aws_subnet" "private_a" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.11.0/24"
+  availability_zone = "${var.aws_region}a"
+  tags              = { Name = "${var.project_name}-private-subnet-a" }
+}
+
+resource "aws_subnet" "private_b" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.12.0/24"
+  availability_zone = "${var.aws_region}b"
+  tags              = { Name = "${var.project_name}-private-subnet-b" }
 }
 
 # ==============================================================================
@@ -234,9 +246,9 @@ resource "aws_s3_bucket_public_access_block" "source" {
 resource "aws_s3_bucket_public_access_block" "egress" {
   bucket                  = aws_s3_bucket.egress.id
   block_public_acls       = true
-  block_public_policy     = false
+  block_public_policy     = true
   ignore_public_acls      = true
-  restrict_public_buckets = false
+  restrict_public_buckets = true
 }
 
 # ==========================================
@@ -337,23 +349,6 @@ resource "aws_iam_role" "ecs_execution" {
 EOF
 }
 
-resource "aws_iam_policy" "ecs_s3_read" {
-  name = "${var.project_name}-ecs-s3-read-policy"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:GetObject", "s3:ListBucket"]
-      Resource = [aws_s3_bucket.egress.arn, "${aws_s3_bucket.egress.arn}/*"]
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_s3_attach" {
-  role       = aws_iam_role.ecs_execution.name
-  policy_arn = aws_iam_policy.ecs_s3_read.arn
-}
-
 resource "aws_iam_role_policy_attachment" "ecs_execution" {
   role       = aws_iam_role.ecs_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
@@ -394,8 +389,21 @@ resource "aws_iam_policy" "fargate_s3_read" {
   })
 }
 
+resource "aws_iam_role" "fargate_task" {
+  name = "${var.project_name}-fargate-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+    }]
+  })
+}
+
 resource "aws_iam_role_policy_attachment" "fargate_s3_attach" {
-  role       = aws_iam_role.ecs_execution.name
+  role       = aws_iam_role.fargate_task.name
   policy_arn = aws_iam_policy.fargate_s3_read.arn
 }
 
@@ -403,13 +411,13 @@ resource "aws_iam_role_policy_attachment" "fargate_s3_attach" {
 # 6. SERVERLESS COMPUTE CORE & LOAD BALANCING (Fargate / ALB)
 # ==============================================================================
 resource "aws_ecr_repository" "api_repo" {
-  name                 = "clearkey-license-server"
+  name                 = "${var.project_name}-license-server"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 }
 
 resource "aws_lb" "external" {
-  name               = "clearkey-api-alb"
+  name               = "${var.project_name}-api-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
@@ -417,7 +425,7 @@ resource "aws_lb" "external" {
 }
 
 resource "aws_lb_target_group" "api" {
-  name        = "fargate-api-tg"
+  name        = "${var.project_name}-api-tg"
   port        = 8000
   protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id
@@ -434,7 +442,7 @@ resource "aws_lb_target_group" "api" {
 
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.external.arn
-  port              = "80"
+  port              = 80
   protocol          = "HTTP"
 
   default_action {
@@ -444,24 +452,23 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_cloudwatch_log_group" "ecs_api_logs" {
-  name              = "/ecs/clearkey-api"
+  name              = "/ecs/${var.project_name}-api"
   retention_in_days = 7
 }
 
 resource "aws_ecs_cluster" "main" {
-  name = "drm-services-cluster"
+  name = "${var.project_name}-services-cluster"
 }
 
 resource "aws_ecs_task_definition" "api_task" {
-  family                   = "clearkey-api"
+  family                   = "${var.project_name}-api"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "256"
   memory                   = "512"
 
-  # CRITICAL FIXES: Ensure both role mappings are explicitly set
   execution_role_arn = aws_iam_role.ecs_execution.arn
-  task_role_arn      = aws_iam_role.ecs_execution.arn
+  task_role_arn      = aws_iam_role.fargate_task.arn
 
   container_definitions = jsonencode([{
     name      = "fastapi-server"
@@ -471,52 +478,30 @@ resource "aws_ecs_task_definition" "api_task" {
       containerPort = 8000
       hostPort      = 8000
     }]
-    # CRITICAL FIX: Direct standard out and errors to the new log group
     logConfiguration = {
       logDriver = "awslogs"
       options = {
-        "awslogs-group"         = "/ecs/clearkey-api"
+        "awslogs-group"         = aws_cloudwatch_log_group.ecs_api_logs.name
         "awslogs-region"        = var.aws_region
         "awslogs-stream-prefix" = "ecs"
       }
     }
     environment = [
-      {
-        name  = "S3_BUCKET"
-        value = aws_s3_bucket.egress.id
-      },
-      {
-        name  = "DB_HOST"
-        value = aws_db_instance.license_db.address
-      },
-      {
-        name  = "DB_NAME"
-        value = aws_db_instance.license_db.db_name
-      },
-      {
-        name  = "ALLOWED_ORIGIN"
-        value = var.allowed_origin
-      }
+      { name = "S3_BUCKET", value = aws_s3_bucket.egress.id },
+      { name = "DB_HOST", value = aws_db_instance.license_db.address },
+      { name = "DB_NAME", value = aws_db_instance.license_db.db_name },
+      { name = "ALLOWED_ORIGIN", value = var.allowed_origin }
     ]
     secrets = [
-      {
-        name      = "DB_USER"
-        valueFrom = "${aws_secretsmanager_secret.database.arn}:username::"
-      },
-      {
-        name      = "DB_PASSWORD"
-        valueFrom = "${aws_secretsmanager_secret.database.arn}:password::"
-      },
-      {
-        name      = "CLEAR_KEY_TEST_VALUE"
-        valueFrom = "${aws_secretsmanager_secret.database.arn}:clear_key_test_value::"
-      }
+      { name = "DB_USER", valueFrom = "${aws_secretsmanager_secret.database.arn}:username::" },
+      { name = "DB_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database.arn}:password::" },
+      { name = "CLEAR_KEY_TEST_VALUE", valueFrom = "${aws_secretsmanager_secret.database.arn}:clear_key_test_value::" }
     ]
   }])
 }
 
 resource "aws_ecs_service" "api" {
-  name            = "clearkey-api-service"
+  name            = "${var.project_name}-api-service"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.api_task.arn
   desired_count   = 1
@@ -631,23 +616,31 @@ output "load_balancer_dns" {
   description = "Paste this direct endpoint directly into your Shaka Player initialization configuration string."
 }
 
-resource "aws_s3_bucket_policy" "allow_public_mock_video_playback" {
+resource "aws_cloudfront_origin_access_control" "egress" {
+  name                              = "${var.project_name}-egress-oac"
+  description                       = "CloudFront access to the private egress bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_s3_bucket_policy" "allow_cloudfront_read" {
   bucket = aws_s3_bucket.egress.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "AllowRootPreFlightAndSegments"
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = "s3:GetObject"
-        Resource = [
-          aws_s3_bucket.egress.arn,
-          "${aws_s3_bucket.egress.arn}/*"
-        ]
+    Statement = [{
+      Sid       = "AllowCloudFrontServicePrincipalReadOnly"
+      Effect    = "Allow"
+      Principal = { Service = "cloudfront.amazonaws.com" }
+      Action    = "s3:GetObject"
+      Resource  = "${aws_s3_bucket.egress.arn}/*"
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${aws_cloudfront_distribution.cdn.id}"
+        }
       }
-    ]
+    }]
   })
 
   depends_on = [aws_s3_bucket_public_access_block.egress]
@@ -664,8 +657,9 @@ resource "aws_cloudfront_distribution" "cdn" {
 
   # --- Origin A: Point straight to your private Egress S3 storage bucket ---
   origin {
-    domain_name = aws_s3_bucket.egress.bucket_regional_domain_name
-    origin_id   = "S3-EgressStorage"
+    domain_name              = aws_s3_bucket.egress.bucket_regional_domain_name
+    origin_id                = "S3-EgressStorage"
+    origin_access_control_id = aws_cloudfront_origin_access_control.egress.id
   }
 
   # --- Origin B: Point straight to your backend Fargate ALB ---
@@ -756,10 +750,10 @@ resource "aws_db_instance" "license_db" {
 }
 
 resource "aws_db_subnet_group" "db_subnets" {
-  name = "clearkey-db-subnet-group"
+  name = "${var.project_name}-db-subnet-group"
   subnet_ids = [
-    aws_subnet.public_a.id,
-    aws_subnet.public_b.id
+    aws_subnet.private_a.id,
+    aws_subnet.private_b.id
   ]
 
   tags = {
