@@ -65,6 +65,7 @@ resource "aws_secretsmanager_secret" "database" {
 }
 
 resource "aws_secretsmanager_secret_version" "database" {
+  # Terraform still records secret values in its state; keep that state private.
   secret_id = aws_secretsmanager_secret.database.id
 
   secret_string = jsonencode({
@@ -124,6 +125,7 @@ resource "aws_route_table_association" "b" {
 }
 
 resource "aws_subnet" "private_a" {
+  # These subnets intentionally have no internet route and are reserved for RDS.
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.11.0/24"
   availability_zone = "${var.aws_region}a"
@@ -350,6 +352,7 @@ EOF
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_execution" {
+  # The execution role is used by ECS to pull images, write logs, and read secrets.
   role       = aws_iam_role.ecs_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
@@ -390,6 +393,7 @@ resource "aws_iam_policy" "fargate_s3_read" {
 }
 
 resource "aws_iam_role" "fargate_task" {
+  # The task role is used by the application code after the container starts.
   name = "${var.project_name}-fargate-task-role"
 
   assume_role_policy = jsonencode({
@@ -617,6 +621,7 @@ output "load_balancer_dns" {
 }
 
 resource "aws_cloudfront_origin_access_control" "egress" {
+  # CloudFront signs S3 requests so the egress bucket does not need public access.
   name                              = "${var.project_name}-egress-oac"
   description                       = "CloudFront access to the private egress bucket"
   origin_access_control_origin_type = "s3"
@@ -657,6 +662,7 @@ resource "aws_cloudfront_distribution" "cdn" {
 
   # --- Origin A: Point straight to your private Egress S3 storage bucket ---
   origin {
+    # S3 remains private; this origin is authorized through the OAC above.
     domain_name              = aws_s3_bucket.egress.bucket_regional_domain_name
     origin_id                = "S3-EgressStorage"
     origin_access_control_id = aws_cloudfront_origin_access_control.egress.id
@@ -700,10 +706,7 @@ resource "aws_cloudfront_distribution" "cdn" {
     allowed_methods  = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods   = ["GET", "HEAD"]
 
-    # --- CRITICAL FIX FOR MEDIACONVERT HANDSHAKE ---
-    # Changing this from redirect-to-https to allow-all ensures that if MediaConvert initiates 
-    # an HTTP request, CloudFront passes it straight through to Fargate as data instead of 
-    # returning a 301/302 Redirect error code, which MediaConvert completely rejects.
+    # MediaConvert SPEKE may initiate HTTP requests and rejects HTTPS redirects.
     viewer_protocol_policy = "allow-all"
 
     forwarded_values {
@@ -767,6 +770,6 @@ output "database_endpoint" {
 }
 
 output "public_subnet_ids" {
-  description = "IDs of the created public subnets"
+  description = "IDs of the private subnets used by the database"
   value       = aws_db_subnet_group.db_subnets.subnet_ids
 }
