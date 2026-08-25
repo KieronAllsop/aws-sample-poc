@@ -13,10 +13,11 @@ def refresh_lambda_function():
     with zipfile.ZipFile('./lambda_function.zip', 'w') as zipf:
         zipf.write('./lambda_function.py')
 
-def apply_terraform_config(db_password):
+def apply_terraform_config(db_password, clear_key_test_value):
     try:
         terraform_environment = os.environ.copy()
         terraform_environment["TF_VAR_db_password"] = db_password
+        terraform_environment["TF_VAR_clear_key_test_value"] = clear_key_test_value
         run(
             ["terraform", "apply", "--auto-approve"],
             check=True,
@@ -86,7 +87,7 @@ def create_drm_cluster():
 
     return service_details
 
-def run_aws_ecs_task(ecs_service_details, terraform_output, db_password):
+def run_aws_ecs_task(ecs_service_details, terraform_output, db_password, clear_key_test_value):
     # Create the ECS task definition
     network_config = {
         "awsvpcConfiguration": {
@@ -105,7 +106,8 @@ def run_aws_ecs_task(ecs_service_details, terraform_output, db_password):
                 {"name": "DB_USER", "value": "db_admin"},
                 {"name": "DB_PASSWORD", "value": db_password},
                 {"name": "DB_HOST", "value": terraform_output.get('database_endpoint')},
-                {"name": "DB_NAME", "value": "license_db"}
+                {"name": "DB_NAME", "value": "license_db"},
+                {"name": "CLEAR_KEY_TEST_VALUE", "value": clear_key_test_value}
             ]
         }
     ]
@@ -124,15 +126,16 @@ def run_aws_ecs_task(ecs_service_details, terraform_output, db_password):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Run with dynamic DB password details.')
+    parser = argparse.ArgumentParser(description='Run with dynamic database and ClearKey test details.')
     parser.add_argument('db_password', type=str, help='Database password')
+    parser.add_argument('clear_key_test_value', type=str, help='32-character hex ClearKey test value')
     args = parser.parse_args()
     if args.db_password is None:
         parser.error("The 'db_password' argument is required.")
         exit(1)
     
     refresh_lambda_function()
-    terraform_output = apply_terraform_config(args.db_password)
+    terraform_output = apply_terraform_config(args.db_password, args.clear_key_test_value)
     if terraform_output:
         print(terraform_output)
     else:
@@ -142,6 +145,6 @@ if __name__ == "__main__":
     login_to_docker(ecr_repo_url)
     build_and_push_docker_image(ecr_repo_url)
     ecs_service_details = create_drm_cluster()
-    run_aws_ecs_task(ecs_service_details, terraform_output, args.db_password)
+    run_aws_ecs_task(ecs_service_details, terraform_output, args.db_password, args.clear_key_test_value)
 
     print("Setup complete")

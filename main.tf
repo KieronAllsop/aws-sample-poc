@@ -37,6 +37,18 @@ variable "db_password" {
   sensitive = true
 }
 
+variable "clear_key_test_value" {
+  type        = string
+  sensitive   = true
+  description = "32-character hex ClearKey value used by this POC"
+}
+
+variable "allowed_origin" {
+  type        = string
+  default     = "http://localhost:8080"
+  description = "Browser origin allowed to call the license service"
+}
+
 locals {
   principal_lookup = {
     "s3_token"     = "s3.amazonaws.com"
@@ -58,8 +70,9 @@ resource "aws_secretsmanager_secret_version" "database" {
   secret_id = aws_secretsmanager_secret.database.id
 
   secret_string = jsonencode({
-    username = "db_admin"
-    password = var.db_password
+    username             = "db_admin"
+    password             = var.db_password
+    clear_key_test_value = var.clear_key_test_value
   })
 }
 
@@ -204,7 +217,7 @@ resource "aws_s3_bucket_cors_configuration" "egress_cors" {
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["GET", "HEAD"]
-    allowed_origins = ["http://localhost:8080"] # Authorises your local python dev server
+    allowed_origins = [var.allowed_origin]
     expose_headers  = ["ETag", "Content-Length", "Access-Control-Allow-Origin"]
     max_age_seconds = 3000
   }
@@ -331,7 +344,7 @@ resource "aws_iam_policy" "ecs_s3_read" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["s3:GetObject", "s3:ListBucket"]
-      Resource = ["arn:aws:s3:::clearkey-video-pipeline-egress-895207965264", "arn:aws:s3:::clearkey-video-pipeline-egress-895207965264/*"]
+      Resource = [aws_s3_bucket.egress.arn, "${aws_s3_bucket.egress.arn}/*"]
     }]
   })
 }
@@ -374,8 +387,8 @@ resource "aws_iam_policy" "fargate_s3_read" {
       Effect = "Allow"
       Action = ["s3:GetObject", "s3:ListBucket"]
       Resource = [
-        "arn:aws:s3:::clearkey-video-pipeline-egress-895207965264",
-        "arn:aws:s3:::clearkey-video-pipeline-egress-895207965264/*"
+        aws_s3_bucket.egress.arn,
+        "${aws_s3_bucket.egress.arn}/*"
       ]
     }]
   })
@@ -479,6 +492,10 @@ resource "aws_ecs_task_definition" "api_task" {
       {
         name  = "DB_NAME"
         value = aws_db_instance.license_db.db_name
+      },
+      {
+        name  = "ALLOWED_ORIGIN"
+        value = var.allowed_origin
       }
     ]
     secrets = [
@@ -489,6 +506,10 @@ resource "aws_ecs_task_definition" "api_task" {
       {
         name      = "DB_PASSWORD"
         valueFrom = "${aws_secretsmanager_secret.database.arn}:password::"
+      },
+      {
+        name      = "CLEAR_KEY_TEST_VALUE"
+        valueFrom = "${aws_secretsmanager_secret.database.arn}:clear_key_test_value::"
       }
     ]
   }])
@@ -622,8 +643,8 @@ resource "aws_s3_bucket_policy" "allow_public_mock_video_playback" {
         Principal = "*"
         Action    = "s3:GetObject"
         Resource = [
-          "arn:aws:s3:::clearkey-video-pipeline-egress-895207965264",
-          "arn:aws:s3:::clearkey-video-pipeline-egress-895207965264/*"
+          aws_s3_bucket.egress.arn,
+          "${aws_s3_bucket.egress.arn}/*"
         ]
       }
     ]

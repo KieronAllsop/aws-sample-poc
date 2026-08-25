@@ -19,23 +19,25 @@ from sqlalchemy.future import select
 # =====================================================================
 app = FastAPI(title="Fargate DRM License Server")
 
+S3_BUCKET = os.environ.get("S3_BUCKET")
+DB_USER = os.environ.get("DB_USER")
+DB_PASS = os.environ.get("DB_PASSWORD")
+DB_HOST = os.environ.get("DB_HOST")
+DB_NAME = os.environ.get("DB_NAME")
+ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN")
+CLEAR_KEY_TEST_VALUE = os.environ.get("CLEAR_KEY_TEST_VALUE")
+
+if not all([S3_BUCKET, DB_USER, DB_PASS, DB_HOST, DB_NAME, ALLOWED_ORIGIN, CLEAR_KEY_TEST_VALUE]):
+    raise RuntimeError("Required S3, database, CORS, or ClearKey environment variables are missing")
+
 # Global CORS Configuration required for cross-origin browser EME sandboxes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[ALLOWED_ORIGIN],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-S3_BUCKET = os.environ.get("S3_BUCKET")
-DB_USER   = os.environ.get("DB_USER")
-DB_PASS   = os.environ.get("DB_PASSWORD")
-DB_HOST   = os.environ.get("DB_HOST")
-DB_NAME   = os.environ.get("DB_NAME")
-
-if not all([S3_BUCKET, DB_USER, DB_PASS, DB_HOST, DB_NAME]):
-    raise RuntimeError("Required S3 or database environment variables are missing")
 
 # Asynchronous connection pooled driver engine linking to AWS RDS instance
 DATABASE_URL = (
@@ -129,7 +131,7 @@ async def get_patched_manifest(video_id: str):
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
-            "Access-Control-Allow-Origin": "*"
+            "Access-Control-Allow-Origin": ALLOWED_ORIGIN
         }
     )
 
@@ -199,7 +201,7 @@ async def handle_unified_key_request(request: Request, db: AsyncSession = Depend
             print(f"⚠️ Key lookup missed in database. Browser requested hex ID: {kid_hex}")
             jwk_keys_payload.append({
                 "kty": "oct",
-                "k": hex_to_base64url("fedcba9876543210fedcba9876543210"),
+                "k": hex_to_base64url(CLEAR_KEY_TEST_VALUE),
                 "kid": kid_b64
             })
             
@@ -209,7 +211,7 @@ async def handle_unified_key_request(request: Request, db: AsyncSession = Depend
                 "type": license_type
             },
             headers={
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
                 "Cache-Control": "no-cache, no-store, must-revalidate"
             }
         )
@@ -236,7 +238,7 @@ async def handle_unified_key_request(request: Request, db: AsyncSession = Depend
         # --- FIXED: Use a deterministic secret key based on the KID or a root secret ---
         # For testing, we can make the secret key identical to the hex version of the KID
         # or use a static test secret string like you had before.
-        secret_key_hex = "fedcba9876543210fedcba9876543210" 
+        secret_key_hex = CLEAR_KEY_TEST_VALUE
 
         async with db.begin():
             existing = await db.execute(select(UserEntitlement).where(UserEntitlement.key_id_hex == kid_hex))
@@ -273,7 +275,7 @@ async def handle_unified_key_request(request: Request, db: AsyncSession = Depend
             media_type="application/xml",
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Access-Control-Allow-Origin": "*", 
+                "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
                 "Access-Control-Allow-Headers": "*",
                 "Access-Control-Allow-Methods": "POST, GET, OPTIONS"
             }
@@ -296,7 +298,7 @@ async def clear_key_options_preflight():
     return Response(
         status_code=200,
         headers={
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
             "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
             "Access-Control-Allow-Headers": "*"
         }
