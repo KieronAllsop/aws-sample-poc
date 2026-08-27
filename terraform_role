@@ -104,12 +104,14 @@
                 "iam:DeletePolicy",
                 "iam:GetPolicy",
                 "iam:GetPolicyVersion",
+                "iam:ListPolicyVersions",
                 "iam:CreatePolicyVersion",
                 "iam:DeletePolicyVersion",
                 "iam:AttachRolePolicy",
                 "iam:DetachRolePolicy",
                 "iam:ListRolePolicies",
-                "iam:ListAttachedRolePolicies"
+                "iam:ListAttachedRolePolicies",
+                "iam:ListInstanceProfilesForRole"
             ],
             "Resource": "*"
         },
