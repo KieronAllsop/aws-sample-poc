@@ -61,6 +61,23 @@ The deployment role is used only to provision and update the infrastructure. The
 
 The deployment role should have only the Terraform, ECR, and ECS permissions needed for this project. Its `iam:PassRole` permissions should be limited to the project runtime roles and restricted with `iam:PassedToService` conditions.
 
+The human IAM user should not receive the deployment permissions directly. The user needs only permission to assume the deployment role, normally through the `clear_key_poc_users` group:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Resource": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/<TERRAFORM_ROLE_NAME>"
+        }
+    ]
+}
+```
+
+The deployment role trust policy must also trust the user and require MFA. Both sides are required: the group policy allows the user to request the role, while the role trust policy controls who may assume it. Do not attach `AdministratorAccess` or the full Terraform policy directly to the human user.
+
 ## Running the Setup Script
 
 The setup script obtains one temporary MFA-backed session and reuses it for Terraform, ECR, and ECS commands. It does not write temporary AWS credentials to disk. The account, role, MFA device, region, and project name are supplied as named options:
